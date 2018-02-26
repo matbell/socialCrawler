@@ -152,7 +152,18 @@ if __name__ == '__main__':
     fb = FacebookCrawler("EAAeDFpDMHZBcBABJekZAmOFabDi4eFWixOt36WcaQVZAoAZBXVS9QImqyjspLTRILajqIMUg2oboTgZCZA7i2Bel8uxTXjxALaf7Ml2BK2xtl1LqlKWFdZBIZBbXZBiRyVxwiIkR4aP4bX5XS67fMouIyxbGXCgc4xba25bUnt0h3SQZDZD")
     d = datetime.datetime.strptime("2018-02-26", "%Y-%m-%d")
     lastMonth = d - datetime.timedelta(days=30)
-    fb.get_posts(lastMonth)
+    #fb.get_posts(lastMonth)
+    print("=== PAGES =====================")
+    fb.get_liked_pages()
+
+    print("=== VIDEOS =====================")
+    fb.get_watched_videos()
+
+    print("=== MUSIC =====================")
+    fb.get_listened_musics()
+
+    print("=== BOOKS =====================")
+    fb.get_read_books()
 
 '''
     api = tweepy.API(auth)
