@@ -1,0 +1,168 @@
+#!venv/bin/python
+
+import argparse
+import tweepy
+from pymongo import MongoClient
+from tqdm import tqdm
+import datetime
+
+from facebook_crawler import FacebookCrawler
+
+'''
+This script downloads the following information from Twitter for the specified user:
+- profile
+- followers
+- friends
+- tweets
+- favorites
+
+It assumes the presence of a running MONGODB database called mdfTwitter, and creates the following collections:
+- tweets : contains the raw json files of the downloaded tweets
+- users : raw json objects which represent the downloaded users' profiles
+- followers : for each downloaded user, it contains a document with the list of her followers
+- friends : for each downloaded user, it contains a document with the list of her friends
+- favorites : for each downloaded user, it contains a document with the list of tweets she liked in the past
+'''
+
+APP_CONSUMER_KEY = '5jZS19ffLeQWMQGNoeltOid1o'
+APP_CONSUMER_SECRET = 'pqgysx4g3kpH7SxWQffF9cVFNmrymSBLgUb89Rt7JD6D8oE0EP'
+MONGO_HOST = 'mongodb://localhost/mdfTwitter'
+
+'''
+Parse command line arguments
+'''
+
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Downloads the following information from Twitter for the specified'
+                                                 'user: profile, followers, friends, tweets, and favorites.')
+
+    parser.add_argument('-token', dest='token', help="User's Twitter Access Token (String)", required=True)
+    parser.add_argument('-secret', dest='secret', help="User's Twitter Access Token Secret (String)", required=True)
+
+    return parser.parse_args()
+
+
+'''
+Downloads the user's profile, and saves it into the users collection.
+See the User object: https://developer.twitter.com/en/docs/tweets/data-dictionary/overview/user-object
+'''
+
+
+def get_profile(api, db):
+    user = api.me()
+    db.users.update({"id": user._json["id"]}, user._json, upsert=True)
+    return user
+
+
+'''
+Downloads the followers of the specified user.
+For each follower, it creates a new document into the users collection or updates an already existing one.
+In addition, it creates (or updates) the following document inside the followers collection:
+{
+    "id": user_id (the id of the target user),
+    "followers" = [] (list of the followers' ids)
+}
+'''
+
+
+def get_followers(api, db, user_id):
+
+    followers = []
+    for follower in tqdm(tweepy.Cursor(api.followers).items(), desc="Downloading followers"):
+        db.users.update({"id": follower._json["id"]}, follower._json, upsert=True)
+        followers.append(follower.id)
+
+    db.followers.update({"id": user_id}, {"id": user_id, "followers": followers}, upsert=True)
+
+
+'''
+Downloads the friends of the specified user.
+For each friend, it creates a new document into the users collection or updates an already existing one.
+In addition, it creates (or updates) the following document inside the friends collection:
+{
+    "id": user_id (the id of the target user),
+    "friends" = [] (list of the friends' ids)
+}
+'''
+
+
+def get_friends(api, db, user_id):
+
+    friends = []
+    for friend in tqdm(tweepy.Cursor(api.friends).items(), desc="Downloading friends"):
+        db.users.update({"id": friend._json["id"]}, friend._json, upsert=True)
+        friends.append(friend.id)
+
+    db.friends.update({"id": user_id}, {"id": user_id, "friends": friends}, upsert=True)
+
+
+'''
+Downloads the tweets created by the specified user.
+For each tweet, it creates a new document into the tweets collection or updates an already existing one.
+'''
+
+
+def get_tweets(api, db):
+
+    for tweet in tqdm(tweepy.Cursor(api.user_timeline).items(), desc="Downloading tweets"):
+        db.tweets.update({"id": tweet._json["id"]}, tweet._json, upsert=True)
+
+        if hasattr(tweet, "retweeted_status"):
+            retweeted_status = tweet.retweeted_status._json
+            db.tweets.update({"id": retweeted_status["id"]}, retweeted_status, upsert=True)
+
+        if hasattr(tweet, "quoted_status"):
+            quoted_status = tweet.quoted_status
+            db.tweets.update({"id": quoted_status["id"]}, quoted_status, upsert=True)
+
+        if hasattr(tweet, "in_reply_to_status_id") and tweet.in_reply_to_status_id is not None:
+            replied_tweet = api.get_status(tweet.in_reply_to_status_id)._json
+            db.tweets.update({"id": replied_tweet["id"]}, replied_tweet, upsert=True)
+
+
+'''
+Downloads the list of tweets liked by the specified user.
+For each tweet, it creates a new document into the tweets collection or updates an already existing one.
+In addition, it creates (or updates) the following document inside the favorites collection:
+{
+    "id": user_id (the id of the target user),
+    "favorites" = [] (list of the favorite tweets' ids)
+}
+'''
+
+
+def get_favorites(api, db, user_id):
+
+    favorites = []
+    for tweet in tqdm(tweepy.Cursor(api.favorites).items(), desc="Downloading favorites"):
+        db.tweets.update({"id": tweet._json["id"]}, tweet._json, upsert=True)
+        favorites.append(tweet._json["id"])
+
+    db.favorites.update({"id": user_id}, {"id": user_id, "favorites": favorites}, upsert=True)
+
+
+if __name__ == '__main__':
+
+    args = parse_arguments()
+
+    auth = tweepy.OAuthHandler(APP_CONSUMER_KEY, APP_CONSUMER_SECRET)
+    auth.set_access_token(args.token, args.secret)
+
+    fb = FacebookCrawler("EAAeDFpDMHZBcBABJekZAmOFabDi4eFWixOt36WcaQVZAoAZBXVS9QImqyjspLTRILajqIMUg2oboTgZCZA7i2Bel8uxTXjxALaf7Ml2BK2xtl1LqlKWFdZBIZBbXZBiRyVxwiIkR4aP4bX5XS67fMouIyxbGXCgc4xba25bUnt0h3SQZDZD")
+    d = datetime.datetime.strptime("2018-02-26", "%Y-%m-%d")
+    lastMonth = d - datetime.timedelta(days=30)
+    fb.get_posts(lastMonth)
+
+'''
+    api = tweepy.API(auth)
+
+    client = MongoClient(MONGO_HOST)
+    db = client.mdfTwitter
+
+    user = get_profile(api, db)
+    get_followers(api, db, user.id)
+    get_friends(api, db, user.id)
+    get_tweets(api, db)
+    get_favorites(api, db, user.id)
+'''
